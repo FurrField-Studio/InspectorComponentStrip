@@ -1,6 +1,12 @@
 using System;
 using System.Collections.Generic;
 using System.Reflection;
+
+#if UNITY_6000_6_OR_NEWER
+using ObjectId = UnityEngine.EntityId;
+#else
+using ObjectId = System.Int32;
+#endif
 using UnityEditor;
 using UnityEditorInternal;
 using UnityEngine;
@@ -121,6 +127,26 @@ namespace InspectorComponentStrip
             return tracker != null && tracker.isLocked;
         }
 
+        // Unity 6.6 replaces integer InstanceIDs with EntityId. Keep the package compatible
+        // with older Unity versions by routing all transient object identifiers through here.
+        private static ObjectId GetObjectId(UnityEngine.Object obj)
+        {
+#if UNITY_6000_6_OR_NEWER
+            return obj.GetEntityId();
+#else
+            return obj.GetInstanceID();
+#endif
+        }
+
+        private static UnityEngine.Object ObjectIdToObject(ObjectId id)
+        {
+#if UNITY_6000_6_OR_NEWER
+            return EditorUtility.EntityIdToObject(id);
+#else
+            return EditorUtility.InstanceIDToObject(id);
+#endif
+        }
+
         private static GameObject GetInspectedGameObjectFor(EditorWindow owner)
         {
             var tracker = GetTrackerForWindow(owner);
@@ -151,12 +177,13 @@ namespace InspectorComponentStrip
 
             private readonly Dictionary<Type, GUIContent> _contentCache = new();
 
-            private readonly Dictionary<int, HashSet<int>> _selectedByGO = new();
+            private readonly Dictionary<ObjectId, HashSet<ObjectId>> _selectedByGO = new();
 
-            private readonly Dictionary<int, Dictionary<int, HideFlags>> _originalFlagsByGO = new();
+            private readonly Dictionary<ObjectId, Dictionary<ObjectId, HideFlags>> _originalFlagsByGO = new();
 
             private double _lastClickTime;
-            private int _lastClickCompId = -1;
+            private ObjectId _lastClickCompId;
+            private bool _hasLastClickCompId;
             private const double DOUBLE_CLICK_THRESHOLD = 0.30; // seconds
 
             public ComponentStrip(EditorWindow owner) => Owner = owner;
@@ -165,8 +192,8 @@ namespace InspectorComponentStrip
             {
                 foreach (var kv in _originalFlagsByGO)
                 {
-                    int goID = kv.Key;
-                    var go = EditorUtility.InstanceIDToObject(goID) as GameObject;
+                    ObjectId goID = kv.Key;
+                    var go = ObjectIdToObject(goID) as GameObject;
                     if (!go) continue;
 
                     var map = kv.Value;
@@ -174,7 +201,7 @@ namespace InspectorComponentStrip
                     foreach (var c in comps)
                     {
                         if (!c) continue;
-                        int cid = c.GetInstanceID();
+                        ObjectId cid = GetObjectId(c);
                         if (!map.TryGetValue(cid, out var orig)) continue;
                         if (c.hideFlags != orig)
                             c.hideFlags = orig;
@@ -196,14 +223,14 @@ namespace InspectorComponentStrip
                 var comps = go.GetComponents<Component>();
                 if (comps == null || comps.Length == 0) return;
 
-                int goID = go.GetInstanceID();
+                ObjectId goID = GetObjectId(go);
 
                 if (!_originalFlagsByGO.ContainsKey(goID))
                 {
-                    var map = new Dictionary<int, HideFlags>(64);
+                    var map = new Dictionary<ObjectId, HideFlags>(64);
                     foreach (var c in comps)
                         if (c)
-                            map[c.GetInstanceID()] = c.hideFlags;
+                            map[GetObjectId(c)] = c.hideFlags;
                     _originalFlagsByGO[goID] = map;
                 }
 
@@ -214,7 +241,7 @@ namespace InspectorComponentStrip
                     if (!c) continue;
 
                     var t = c.GetType();
-                    int compId = c.GetInstanceID();
+                    ObjectId compId = GetObjectId(c);
 
                     var orig = _originalFlagsByGO[goID].TryGetValue(compId, out var oflags) ? oflags : c.hideFlags;
                     bool originallyHidden = (orig & HideFlags.HideInInspector) != 0;
@@ -238,8 +265,9 @@ namespace InspectorComponentStrip
                         evt.StopImmediatePropagation();
 
                         var now = EditorApplication.timeSinceStartup;
-                        bool isDouble = (compId == _lastClickCompId) && (now - _lastClickTime <= DOUBLE_CLICK_THRESHOLD);
+                        bool isDouble = _hasLastClickCompId && (compId == _lastClickCompId) && (now - _lastClickTime <= DOUBLE_CLICK_THRESHOLD);
                         _lastClickCompId = compId;
+                        _hasLastClickCompId = true;
                         _lastClickTime = now;
 
                         if (isDouble)
@@ -252,7 +280,7 @@ namespace InspectorComponentStrip
                         }
 
                         if (selected == null)
-                            selected = _selectedByGO[goID] = new HashSet<int>();
+                            selected = _selectedByGO[goID] = new HashSet<ObjectId>();
 
                         if (!selected.Add(compId))
                             selected.Remove(compId);
@@ -266,18 +294,18 @@ namespace InspectorComponentStrip
                 }
             }
 
-            private void RestoreGO(int goID)
+            private void RestoreGO(ObjectId goID)
             {
                 if (!_originalFlagsByGO.TryGetValue(goID, out var map)) return;
 
-                var go = EditorUtility.InstanceIDToObject(goID) as GameObject;
+                var go = ObjectIdToObject(goID) as GameObject;
                 if (!go) return;
 
                 var comps = go.GetComponents<Component>();
                 foreach (var c in comps)
                 {
                     if (!c) continue;
-                    int cid = c.GetInstanceID();
+                    ObjectId cid = GetObjectId(c);
                     if (!map.TryGetValue(cid, out var orig)) continue;
                     if (c.hideFlags != orig)
                         c.hideFlags = orig;
@@ -286,15 +314,15 @@ namespace InspectorComponentStrip
                 ForceInspectorRebuild(Owner, false);
             }
 
-            private void ApplyHideFlags(GameObject go, HashSet<int> selectedIds)
+            private void ApplyHideFlags(GameObject go, HashSet<ObjectId> selectedIds)
             {
-                int goID = go.GetInstanceID();
+                ObjectId goID = GetObjectId(go);
                 if (!_originalFlagsByGO.TryGetValue(goID, out var originals))
                 {
-                    originals = new Dictionary<int, HideFlags>(64);
+                    originals = new Dictionary<ObjectId, HideFlags>(64);
                     foreach (var c in go.GetComponents<Component>())
                         if (c)
-                            originals[c.GetInstanceID()] = c.hideFlags;
+                            originals[GetObjectId(c)] = c.hideFlags;
                     _originalFlagsByGO[goID] = originals;
                 }
 
@@ -305,7 +333,7 @@ namespace InspectorComponentStrip
                 {
                     if (!c) continue;
 
-                    int cid = c.GetInstanceID();
+                    ObjectId cid = GetObjectId(c);
                     if (!originals.TryGetValue(cid, out var orig))
                         orig = originals[cid] = c.hideFlags; // capture late-joined components
 

@@ -14,7 +14,7 @@ Unity Editor-only tool that inserts a small chip strip at the top of each Inspec
 
 In Unity: **Window → Package Manager → + → Add package from git URL...**
 
-- `https://github.com/FurrField-Studio/InspectorComponentStrip`
+- `https://github.com/FurrField-Studio/InspectorComponentStrip.git`
 
 ## Notes
 
