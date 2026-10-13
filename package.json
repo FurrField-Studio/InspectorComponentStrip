@@ -1,7 +1,7 @@
 {
   "name": "com.furrfield-studio.inspector-component-strip",
   "displayName": "Inspector Component Strip",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "unity": "2021.3",
   "description": "Adds a component chip strip to the top of the Unity Inspector; click chips to isolate components, double-click to reset.",
   "keywords": [
@@ -15,5 +15,5 @@
     "url": "https://github.com/FurrField-Studio"
   },
   "license": "MIT",
-  "_fingerprint": "74de8f3fc790b201c6f33eb320171d5ea6800b04"
+  "_fingerprint": "f1b286ac54f9f37d261c3ef4147ef215e6b3f3f9"
 }

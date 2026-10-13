@@ -19,24 +19,43 @@ namespace InspectorComponentStrip
     {
         private static readonly List<ComponentStrip> Strips = new();
 
+        private const int HookPasses = 4;
+        private static int _hookPassesRemaining;
+        private static bool _hookPassesArmed;
+
         static InspectorComponentStripUI()
         {
-            EditorApplication.delayCall += HookAllInspectors;
-            EditorApplication.update += HookNewInspectorsTick;
-
             Selection.selectionChanged += () =>
             {
                 foreach (var strip in Strips.ToArray())
                 {
                     if (strip == null) continue;
+
+                    if (!TryGetInspectedGameObject(strip.Owner, out _)) continue;
                     if (IsInspectorLocked(strip.Owner)) continue;
                     strip.RestoreAllTouched();
                     strip.Rebuild();
                 }
+
+                StartHookPasses();
             };
+
+            EditorApplication.hierarchyChanged += StartHookPasses;
+            EditorApplication.projectChanged += StartHookPasses;
 
             AssemblyReloadEvents.beforeAssemblyReload += RestoreAllStripsTouched;
             EditorApplication.quitting += RestoreAllStripsTouched;
+
+            EditorApplication.delayCall += StartHookPasses;
+        }
+
+        private static void StartHookPasses()
+        {
+            _hookPassesRemaining = HookPasses;
+
+            if (_hookPassesArmed) return;
+            _hookPassesArmed = true;
+            EditorApplication.delayCall += HookAllInspectors;
         }
 
         private static void RestoreAllStripsTouched()
@@ -48,14 +67,23 @@ namespace InspectorComponentStrip
 
         private static void HookAllInspectors()
         {
-            foreach (var win in FindAllInspectors())
-                EnsureStrip(win);
-        }
+            bool morePasses = _hookPassesRemaining > 0;
+            if (morePasses) _hookPassesRemaining--;
 
-        private static void HookNewInspectorsTick()
-        {
+            for (int i = Strips.Count - 1; i >= 0; i--)
+            {
+                var stale = Strips[i];
+                if (stale == null || !stale.Owner || stale.panel == null)
+                    Strips.RemoveAt(i);
+            }
+
             foreach (var win in FindAllInspectors())
                 EnsureStrip(win);
+
+            if (morePasses)
+                EditorApplication.delayCall += HookAllInspectors;
+            else
+                _hookPassesArmed = false;
         }
 
         private static IEnumerable<EditorWindow> FindAllInspectors()
@@ -74,7 +102,19 @@ namespace InspectorComponentStrip
             if (!win) return;
             var root = win.rootVisualElement;
 
-            if (root.Q<ComponentStrip>("component-strip") != null) return;
+            var existing = root.Q<ComponentStrip>("component-strip");
+
+            if (!TryGetInspectedGameObject(win, out _))
+            {
+                if (existing != null)
+                {
+                    existing.RemoveFromHierarchy();
+                    Strips.Remove(existing);
+                }
+                return;
+            }
+
+            if (existing != null) return;
 
             var strip = new ComponentStrip(win) { name = "component-strip" };
             strip.style.marginLeft = 6;
@@ -147,28 +187,24 @@ namespace InspectorComponentStrip
 #endif
         }
 
-        private static GameObject GetInspectedGameObjectFor(EditorWindow owner)
+        private static bool TryGetInspectedGameObject(EditorWindow owner, out GameObject result)
         {
+            result = null;
+
             var tracker = GetTrackerForWindow(owner);
-            if (tracker == null)
-                return Selection.activeGameObject;
+            if (tracker == null) return false;
 
             var editors = tracker.activeEditors;
-            if (editors == null || editors.Length == 0)
-                return Selection.activeGameObject;
+            if (editors == null || editors.Length == 0) return false;
 
             foreach (var ed in editors)
             {
                 var t = ed?.target;
-                if (t is Component comp && comp) return comp.gameObject;
-                if (t is GameObject go && go) return go;
+                if (t is Component comp && comp) { result = comp.gameObject; return true; }
+                if (t is GameObject go && go) { result = go; return true; }
             }
 
-            var first = editors[0]?.target;
-            if (first is Component c && c) return c.gameObject;
-            if (first is GameObject g && g) return g;
-
-            return Selection.activeGameObject;
+            return false;
         }
 
         private sealed class ComponentStrip : VisualElement
@@ -217,8 +253,7 @@ namespace InspectorComponentStrip
             {
                 Clear();
 
-                var go = GetInspectedGameObjectFor(Owner);
-                if (!go) return;
+                if (!TryGetInspectedGameObject(Owner, out var go)) return;
 
                 var comps = go.GetComponents<Component>();
                 if (comps == null || comps.Length == 0) return;

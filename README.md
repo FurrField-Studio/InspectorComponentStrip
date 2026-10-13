@@ -19,3 +19,7 @@ In Unity: **Window → Package Manager → + → Add package from git URL...**
 ## Notes
 
 This tool changes component `hideFlags` at edit time and restores them on selection change, domain reload, and editor quit.
+
+## Known issue
+
+The strip only appears in inspectors showing a GameObject, Component, or prefab root. If you open a new Inspector window without changing your selection, the strip will not show up until you reselect a GameObject.
